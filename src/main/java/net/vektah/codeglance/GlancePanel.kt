@@ -143,13 +143,11 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
         val map = getOrCreateMap() ?: return
         if (!renderLock.acquire()) return
 
-        val hl = SyntaxHighlighterFactory.getSyntaxHighlighter(file.language, project, file.virtualFile)
-
-        val text = editor.document.text
+        val highlighter = SyntaxHighlighterFactory.getSyntaxHighlighter(file.language, project, file.virtualFile)
         val folds = Folds(editor.foldingModel.allFoldRegions)
 
         runner.run {
-            map.update(text, editor.colorsScheme, hl, folds)
+            map.update(editor.document, editor.colorsScheme, highlighter, folds)
             scrollstate.setDocumentSize(config.width, map.height)
 
             renderLock.release()

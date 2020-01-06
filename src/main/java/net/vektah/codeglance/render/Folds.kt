@@ -25,31 +25,20 @@
 
 package net.vektah.codeglance.render
 
+import com.google.common.collect.Range
+import com.google.common.collect.RangeMap
+import com.google.common.collect.TreeRangeMap
 import com.intellij.openapi.editor.FoldRegion
 
 // Is a copy of Array<FoldRegion> that only contains folded folds and can be passed safely to another thread
-class Folds{
-    private val foldsSet: HashSet<Int> = hashSetOf()
+class Folds(allFolds: Array<FoldRegion>) {
+    val foldsMap: RangeMap<Int, String> = TreeRangeMap.create()
 
-    constructor(allFolds: Array<FoldRegion>) {
+    init {
         allFolds
             .filterNot { it.isExpanded }
             .forEach { foldRegion ->
-                for (index in foldRegion.startOffset until foldRegion.endOffset)
-                    foldsSet.add(index)
+                foldsMap.put(Range.closedOpen(foldRegion.startOffset, foldRegion.endOffset), foldRegion.placeholderText)
             }
-    }
-
-    // Used by tests that want an empty fold set
-    constructor()
-
-    /**
-     * Checks if a given position is within a folded region
-     * @param position  the offset from the start of file in chars
-     * *
-     * @return true if the given position is folded.
-     */
-    fun isFolded(position: Int): Boolean {
-        return foldsSet.contains(position)
     }
 }

@@ -84,7 +84,7 @@ class EditorPanelInjector(private val project: Project, private val runner: Task
         if (innerLayout.getLayoutComponent(where) == null) {
             val glancePanel = GlancePanel(project, editor, panel, runner)
             panel.add(glancePanel, where)
-            panels.put(editor, glancePanel)
+            panels[editor] = glancePanel
         }
     }
 

@@ -26,7 +26,7 @@
 package net.vektah.codeglance.render
 
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.editor.FoldRegion
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.fileTypes.SyntaxHighlighter
 import com.intellij.psi.tree.IElementType
@@ -34,7 +34,6 @@ import net.vektah.codeglance.config.Config
 
 import java.awt.*
 import java.awt.image.BufferedImage
-import java.util.ArrayList
 
 /**
  * A rendered minimap of a document
@@ -43,54 +42,30 @@ class Minimap(private val config: Config) {
     var img: BufferedImage? = null
     var height: Int = 0
     private val logger = Logger.getInstance(javaClass)
-    private var line_endings: ArrayList<Int>? = null
+    private lateinit var lines: MutableList<LineInfo>
 
     /**
      * Scans over the entire document once to work out the required dimensions then rebuilds the image if necessary.
-
-     * Because java chars are UTF-8 16 bit chars this function should be UTF safe in the 2 byte range, which is all intellij
-     * seems to handle anyway....
+     *
+     * Because java chars are UTF-8 16 bit chars this function should be UTF safe in the 2 byte range, which is all
+     * intellij seems to handle anyway....
      */
-    fun updateDimensions(text: CharSequence, folds: Folds) {
-        var line_length = 0    // The current line length
-        var longest_line = 1   // The longest line in the document
-        var lines = 1          // The total number of lines in the document
-        var last: Char = ' '
-        var ch: Char
+    fun updateDimensions(document: Document, folds: Folds) {
+        val lineCount = document.lineCount - 1
+        this.lines = mutableListOf()
+        var startOffset: Int? = null
+        var endOffset: Int?
 
-        val line_endings = ArrayList<Int>()
-        // Magical first line
-        line_endings.add(-1)
+        for (lineNumber in 0..lineCount) {
+            startOffset = startOffset ?: document.getLineStartOffset(lineNumber)
+            endOffset = document.getLineEndOffset(lineNumber)
+            if (folds.foldsMap[endOffset] != null) continue
 
-        var i = 0
-        val len = text.length
-        while (i < len) {
-            if (folds.isFolded(i)) {
-                i++
-                continue
-            }
-
-            ch = text[i]
-
-            if (ch == '\n' || (ch == '\r' && last != '\n')) {
-                line_endings.add(i)
-                lines++
-                if (line_length > longest_line) longest_line = line_length
-                line_length = 0
-            } else if (ch == '\t') {
-                line_length += 4
-            } else {
-                line_length++
-            }
-
-            last = ch
-            i++
+            this.lines.add(LineInfo(this.lines.size, startOffset, endOffset))
+            startOffset = null
         }
-        // If there is no final newline add one.
-        if (line_endings[line_endings.size - 1] !== text.length - 1) line_endings.add(text.length - 1)
 
-        this.line_endings = line_endings
-        height = (lines + 1) * config.pixelsPerLine
+        height = this.lines.size * config.pixelsPerLine
 
         // If the image is too small to represent the entire document now then regenerate it
         // TODO: Copy old image when incremental update is added.
@@ -104,63 +79,22 @@ class Minimap(private val config: Config) {
     }
 
     /**
-     * Binary search for a line ending.
-     * @param i character offset from start of document
-     * *
-     * @return 3 element array, [line_number, o]
-     */
-    fun getLine(i: Int): LineInfo {
-        // We can get called before the line scan has been done. Just return the first line.
-        if (line_endings == null) return NO_LINES
-        if (line_endings!!.size == 0) return NO_LINES
-        val lines = line_endings!![line_endings!!.size - 1]
-
-        // Dummy entries if there are no lines
-        if (line_endings!!.size == 0) return NO_LINES
-        if (line_endings!!.size == 1) return NO_LINES
-        if (line_endings!!.size == 2) return LineInfo(1, line_endings!![0] + 1, line_endings!![1])
-
-        var index_min = 0
-        var index_max = line_endings!!.size - 1
-        var index_mid: Int
-        var value: Int
-
-        val clampedI = clamp(i, 0, lines)
-
-        while (true) {
-            index_mid = Math.floor(((index_min + index_max) / 2.0f).toDouble()).toInt() // Key space is pretty linear, might be able to use that to scale our next point.
-            value = line_endings!![index_mid]
-
-            if (value < clampedI) {
-                if (clampedI < line_endings!![index_mid + 1]) return LineInfo(index_mid + 1, value + 1, line_endings!![index_mid + 1])
-
-                index_min = index_mid + 1
-            } else if (clampedI < value) {
-                if (line_endings!![index_mid - 1] < clampedI) return LineInfo(index_mid, line_endings!![index_mid - 1] + 1, value)
-
-                index_max = index_mid - 1
-            } else {
-                // character at i is actually a newline, so grab the line before it.
-                return LineInfo(index_mid, line_endings!![index_mid - 1] + 1, clampedI)
-            }
-        }
-    }
-
-    /**
      * Works out the color a token should be rendered in.
-
+     *
      * @param element       The element to get the color for
      * *
-     * @param hl            the syntax highlighter for this document
+     * @param highlighter   the syntax highlighter for this document
      * *
      * @param colorScheme   the users color scheme
      * *
      * @return the RGB color to use for the given element
      */
-    private fun getColorForElementType(element: IElementType, hl: SyntaxHighlighter, colorScheme: EditorColorsScheme): Int {
+    private fun getColorForElementType(element: IElementType,
+                                       highlighter: SyntaxHighlighter,
+                                       colorScheme: EditorColorsScheme): Int {
         var color = colorScheme.defaultForeground.rgb
         var tmp: Color?
-        val attributes = hl.getTokenHighlights(element)
+        val attributes = highlighter.getTokenHighlights(element)
         for (attribute in attributes) {
             val attr = colorScheme.getAttributes(attribute)
             if (attr != null) {
@@ -174,86 +108,81 @@ class Minimap(private val config: Config) {
 
     /**
      * Internal worker function to update the minimap image
-
+     *
      * @param text          The entire text of the document to render
      * *
      * @param colorScheme   The users color scheme
      * *
-     * @param hl            The syntax highlighter to use for the language this document is in.
+     * @param highlighter   The syntax highlighter to use for the language this document is in.
      */
-    fun update(text: CharSequence, colorScheme: EditorColorsScheme, hl: SyntaxHighlighter, folds: Folds) {
-        logger.debug("Updating file image.")
-        updateDimensions(text, folds)
+    fun update(document: Document, colorScheme: EditorColorsScheme, highlighter: SyntaxHighlighter, folds: Folds) {
+        try {
+            logger.debug("Updating file image.")
 
-        var color: Int
-        var ch: Char
-        var startLine: LineInfo
-        val lexer = hl.highlightingLexer
-        var tokenType: IElementType?
+            updateDimensions(document, folds)
+            freshImage()
 
+            val text = document.text
+            val lexer = highlighter.highlightingLexer
+
+            for (line in this.lines) {
+                lexer.start(text, line.begin, line.end)
+                var tokenType: IElementType? = lexer.tokenType
+
+                val y = line.number * config.pixelsPerLine
+                var x = 0
+                var placeholder: String? = null
+
+                while (tokenType != null) {
+                    val needDrawPlaceholder = placeholder == null
+                    val color = getColorForElementType(tokenType, highlighter, colorScheme)
+
+                    val start = lexer.tokenStart
+                    placeholder = folds.foldsMap[start]
+
+                    if (placeholder != null) {
+                        if (needDrawPlaceholder) x += renderText(placeholder, x, y, color)
+                    } else {
+                        val end = lexer.tokenEnd
+                        val word = text.subSequence(start, end)
+                        x += renderText(word, x, y, color)
+                    }
+
+                    if (x >= config.width) break
+
+                    lexer.advance()
+                    tokenType = lexer.tokenType
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Update image error", e)
+        }
+    }
+
+    private fun freshImage() {
         val g = img!!.graphics as Graphics2D
         g.composite = CLEAR
         g.fillRect(0, 0, img!!.width, img!!.height)
+    }
 
-        lexer.start(text)
-        tokenType = lexer.tokenType
-
-        var x: Int
-        var y: Int
-        while (tokenType != null) {
-            val start = lexer.tokenStart
-            startLine = getLine(start)
-            y = startLine.number * config.pixelsPerLine
-
-            color = getColorForElementType(tokenType, hl, colorScheme)
-
-            // Pre-loop to count whitespace from start of line.
-            x = 0
-            for (i in startLine.begin..start - 1) {
-                // Dont count lines inside of folded regions.
-                if (folds.isFolded(i)) {
-                    continue
-                }
-
-                if (text[i] == '\t') {
-                    x += 4
+    private fun renderText(text: CharSequence, startX: Int, y: Int, color: Int): Int {
+        var x = 0
+        text.chars()
+            .forEach {
+                if (startX + x < config.width) {
+                    renderChar(startX + x++, y, it, color)
                 } else {
-                    x += 1
-                }
-
-                // Abort if this line is getting to long...
-                if (x > config.width) break
-            }
-
-            // Render whole token, make sure multi lines are handled gracefully.
-            for (i in start..lexer.tokenEnd - 1) {
-                // Don't render folds.
-                if (folds.isFolded(i)) continue
-                // Watch out for tokens that extend past the document... bad plugins? see issue #138
-                if (i >= text.length) return
-
-                ch = text[i]
-
-                if (ch == '\n') {
-                    x = 0
-                    y += config.pixelsPerLine
-                } else if (ch == '\t') {
-                    x += 4
-                } else {
-                    x += 1
-                }
-
-                if (0 <= x && x < img!!.width && 0 <= y && y + config.pixelsPerLine < img!!.height) {
-                    if (config.clean) {
-                        renderClean(x, y, text[i].toInt(), color)
-                    } else {
-                        renderAccurate(x, y, text[i].toInt(), color)
-                    }
+                    return@forEach
                 }
             }
+        return x
+    }
 
-            lexer.advance()
-            tokenType = lexer.tokenType
+    private fun renderChar(x: Int, y: Int, char: Int, color: Int) {
+        if (config.clean) {
+            renderClean(x, y, char, color)
+        } else {
+            renderAccurate(x, y, char, color)
         }
     }
 
@@ -333,6 +262,7 @@ class Minimap(private val config: Config) {
         if (a > 1) a = color.toFloat()
         if (a < 0) a = 0f
 
+        val unpackedColor = IntArray(4)
         // abgr is backwards?
         unpackedColor[3] = (a * 255).toInt()
         unpackedColor[0] = (color and 16711680) shr 16
@@ -346,7 +276,5 @@ class Minimap(private val config: Config) {
 
     companion object {
         private val CLEAR = AlphaComposite.getInstance(AlphaComposite.CLEAR)
-        private val unpackedColor = IntArray(4)
-        private val NO_LINES = LineInfo(1, 0, 0)
     }
 }
