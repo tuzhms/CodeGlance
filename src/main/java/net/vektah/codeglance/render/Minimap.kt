@@ -44,7 +44,7 @@ import java.awt.image.BufferedImage
  */
 class Minimap(private val config: Config) {
     var img: BufferedImage? = null
-    var height: Int = 0
+    var height: Int = 0 //(px)
     private val logger = Logger.getInstance(javaClass)
 
     /**
@@ -56,7 +56,7 @@ class Minimap(private val config: Config) {
     fun updateDimensions(editor: Editor, linesCount: Int) {
         getPreferredHeight(editor)
 
-        if (height == 0 && linesCount > 0) {
+        if (height < linesCount * config.pixelsPerLine) {
             height = linesCount * config.pixelsPerLine
         }
 
@@ -176,7 +176,7 @@ class Minimap(private val config: Config) {
                 }
             }
         } catch (e: Exception) {
-            logger.warn("Update image error", e)
+            logger.error("Update minimap image error", e)
         }
     }
 

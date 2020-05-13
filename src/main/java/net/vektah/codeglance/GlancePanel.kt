@@ -268,8 +268,8 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
     }
 
     override fun visibleAreaChanged(visibleAreaEvent: VisibleAreaEvent) {
-        val visibleAreaYChanged = visibleAreaEvent.newRectangle.y != visibleAreaEvent.oldRectangle.y
-        val visibleAreaHeightChanged = visibleAreaEvent.newRectangle.height != visibleAreaEvent.oldRectangle.height
+        val visibleAreaYChanged = visibleAreaEvent.newRectangle.y != visibleAreaEvent.oldRectangle?.y
+        val visibleAreaHeightChanged = visibleAreaEvent.newRectangle.height != visibleAreaEvent.oldRectangle?.height
 
         if (visibleAreaYChanged || visibleAreaHeightChanged) {
             val visibleArea = editor.scrollingModel.visibleArea
