@@ -25,11 +25,15 @@
 
 package net.vektah.codeglance.render
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.colors.EditorColorsScheme
+import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.fileTypes.SyntaxHighlighter
 import com.intellij.psi.tree.IElementType
+import com.intellij.util.ui.UIUtil
 import net.vektah.codeglance.config.Config
 
 import java.awt.*
@@ -42,7 +46,6 @@ class Minimap(private val config: Config) {
     var img: BufferedImage? = null
     var height: Int = 0
     private val logger = Logger.getInstance(javaClass)
-    private lateinit var lines: MutableList<LineInfo>
 
     /**
      * Scans over the entire document once to work out the required dimensions then rebuilds the image if necessary.
@@ -50,9 +53,34 @@ class Minimap(private val config: Config) {
      * Because java chars are UTF-8 16 bit chars this function should be UTF safe in the 2 byte range, which is all
      * intellij seems to handle anyway....
      */
-    fun updateDimensions(document: Document, folds: Folds) {
+    fun updateDimensions(editor: Editor, linesCount: Int) {
+        getPreferredHeight(editor)
+
+        if (height == 0 && linesCount > 0) {
+            height = linesCount * config.pixelsPerLine
+        }
+
+        // If the image is too small to represent the entire document now then regenerate it
+        // TODO: Copy old image when incremental update is added.
+        if (img == null || img!!.height < height || img!!.width < config.width) {
+            if (img != null) img!!.flush()
+            // Create an image that is a bit bigger then the one we need so we don't need to re-create it again soon.
+            // Documents can get big, so rather then relative sizes lets just add a fixed amount on.
+            img = UIUtil.createImage(config.width, height + 100 * config.pixelsPerLine, BufferedImage.TYPE_4BYTE_ABGR)
+            logger.debug("Created new image")
+        }
+    }
+
+    private fun getPreferredHeight(editor: Editor) {
+        val app = ApplicationManager.getApplication()
+        app.invokeLater {
+            height = (editor as EditorImpl).preferredHeight / editor.lineHeight * config.pixelsPerLine
+        }
+    }
+
+    private fun calculateLineOffsets(document: Document, folds: Folds): List<LineInfo> {
         val lineCount = document.lineCount - 1
-        this.lines = mutableListOf()
+        val lines: MutableList<LineInfo> = mutableListOf()
         var startOffset: Int? = null
         var endOffset: Int?
 
@@ -61,21 +89,11 @@ class Minimap(private val config: Config) {
             endOffset = document.getLineEndOffset(lineNumber)
             if (folds.foldsMap[endOffset] != null) continue
 
-            this.lines.add(LineInfo(this.lines.size, startOffset, endOffset))
+            lines.add(LineInfo(lines.size, startOffset, endOffset))
             startOffset = null
         }
 
-        height = this.lines.size * config.pixelsPerLine
-
-        // If the image is too small to represent the entire document now then regenerate it
-        // TODO: Copy old image when incremental update is added.
-        if (img == null || img!!.height < height || img!!.width < config.width) {
-            if (img != null) img!!.flush()
-            // Create an image that is a bit bigger then the one we need so we don't need to re-create it again soon.
-            // Documents can get big, so rather then relative sizes lets just add a fixed amount on.
-            img = BufferedImage(config.width, height + 100 * config.pixelsPerLine, BufferedImage.TYPE_4BYTE_ABGR)
-            logger.debug("Created new image")
-        }
+        return lines
     }
 
     /**
@@ -109,23 +127,26 @@ class Minimap(private val config: Config) {
     /**
      * Internal worker function to update the minimap image
      *
-     * @param text          The entire text of the document to render
-     * *
-     * @param colorScheme   The users color scheme
+     * @param editor        Current document editor
      * *
      * @param highlighter   The syntax highlighter to use for the language this document is in.
+     * *
+     * @param folds         Map of closed document folds
      */
-    fun update(document: Document, colorScheme: EditorColorsScheme, highlighter: SyntaxHighlighter, folds: Folds) {
+    fun update(editor: Editor, highlighter: SyntaxHighlighter, folds: Folds) {
         try {
             logger.debug("Updating file image.")
+            val document = editor.document
+            val colorScheme = editor.colorsScheme
 
-            updateDimensions(document, folds)
+            val lines = calculateLineOffsets(document, folds)
+            updateDimensions(editor, lines.size)
             freshImage()
 
             val text = document.text
             val lexer = highlighter.highlightingLexer
 
-            for (line in this.lines) {
+            for (line in lines) {
                 lexer.start(text, line.begin, line.end)
                 var tokenType: IElementType? = lexer.tokenType
 
@@ -155,7 +176,7 @@ class Minimap(private val config: Config) {
                 }
             }
         } catch (e: Exception) {
-            logger.error("Update image error", e)
+            logger.warn("Update image error", e)
         }
     }
 

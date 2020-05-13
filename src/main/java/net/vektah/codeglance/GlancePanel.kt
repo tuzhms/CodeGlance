@@ -34,6 +34,7 @@ import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.ui.JBColor
+import com.intellij.util.ui.UIUtil
 import net.vektah.codeglance.concurrent.DirtyLock
 import net.vektah.codeglance.config.Config
 import net.vektah.codeglance.config.ConfigService
@@ -110,22 +111,21 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
      * Adjusts the panels size to be a percentage of the total window
      */
     private fun updateSize() {
-        if (isDisabled) {
-            preferredSize = Dimension(0, 0)
+        preferredSize = if (isDisabled) {
+            Dimension(0, 0)
         } else {
-            val size = Dimension(config.width, 0)
-            preferredSize = size
+            Dimension(config.width, 0)
         }
     }
 
     // the minimap is held by a soft reference so the GC can delete it at any time.
     // if its been deleted and we want it again (active tab) we recreate it.
-    private fun getOrCreateMap() : Minimap? {
+    private fun getOrCreateMap(): Minimap? {
         var map = mapRef.get()
 
         if (map == null) {
             map = Minimap(configService.state!!)
-            mapRef = SoftReference<Minimap>(map)
+            mapRef = SoftReference(map)
         }
 
         return map
@@ -147,7 +147,7 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
         val folds = Folds(editor.foldingModel.allFoldRegions)
 
         runner.run {
-            map.update(editor.document, editor.colorsScheme, highlighter, folds)
+            map.update(editor, highlighter, folds)
             scrollstate.setDocumentSize(config.width, map.height)
 
             renderLock.release()
@@ -163,7 +163,7 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
 
     private fun updateImageSoon() = SwingUtilities.invokeLater { updateImage() }
 
-    fun paintLast(gfx: Graphics?) {
+    private fun paintLast(gfx: Graphics?) {
         val g = gfx as Graphics2D
 
 
@@ -191,7 +191,7 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
         }
 
         if (buf == null || buf?.width!! < width || buf?.height!! < height) {
-            buf = BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR)
+            buf = UIUtil.createImage(width, height, BufferedImage.TYPE_4BYTE_ABGR)
         }
 
         val g = buf!!.createGraphics()
@@ -219,9 +219,9 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
         val end = editor.offsetToVisualPosition(endByte)
 
         val sX = start.column
-        val sY = (start.line + 1) * config.pixelsPerLine - scrollstate.visibleStart
+        val sY = start.line * config.pixelsPerLine - scrollstate.visibleStart
         val eX = end.column
-        val eY = (end.line + 1) * config.pixelsPerLine - scrollstate.visibleStart
+        val eY = end.line * config.pixelsPerLine - scrollstate.visibleStart
 
         g.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.80f)
         g.color = editor.colorsScheme.getColor(ColorKey.createColorKey("SELECTION_BACKGROUND", JBColor.BLUE))
@@ -249,7 +249,7 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
     }
 
     private fun paintSelections(g: Graphics2D) {
-       paintSelection(g, editor.selectionModel.selectionStart, editor.selectionModel.selectionEnd)
+        paintSelection(g, editor.selectionModel.selectionStart, editor.selectionModel.selectionEnd)
 
         for ((index, start) in editor.selectionModel.blockSelectionStarts.withIndex()) {
             paintSelection(g, start, editor.selectionModel.blockSelectionEnds[index])
