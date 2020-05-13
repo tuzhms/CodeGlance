@@ -54,7 +54,6 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
     private var mapRef = SoftReference<Minimap>(null)
     private val configService = ServiceManager.getService(ConfigService::class.java)
     private var config: Config = configService.state!!
-    private var lastFoldCount = -1
     private var buf: BufferedImage? = null
     private val renderLock = DirtyLock()
     private val scrollstate = ScrollState()
@@ -64,6 +63,7 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
     private val componentListener: ComponentListener
     private val documentListener: DocumentListener
     private val selectionListener: SelectionListener = SelectionListener { repaint() }
+    private val foldMouseTriggerListener: EditorMouseListener
 
     private val isDisabled: Boolean
         get() = config.disabled || editor.document.textLength > config.maxFileSize || editor.document.lineCount < config.minLineCount || container.width < config.minWindowWidth
@@ -92,6 +92,17 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
             }
         }
         editor.document.addDocumentListener(documentListener)
+
+        foldMouseTriggerListener = object : EditorMouseAdapter() {
+            override fun mouseReleased(e: EditorMouseEvent?) {
+                super.mouseReleased(e)
+                if (EditorMouseEventArea.FOLDING_OUTLINE_AREA == e?.area) {
+                    updateImage()
+                }
+            }
+        }
+
+        editor.addEditorMouseListener(foldMouseTriggerListener)
 
         configService.onChange(onConfigChange)
 
@@ -257,34 +268,30 @@ class GlancePanel(private val project: Project, fileEditor: FileEditor, private 
     }
 
     override fun visibleAreaChanged(visibleAreaEvent: VisibleAreaEvent) {
-        // TODO pending http://youtrack.jetbrains.com/issue/IDEABKL-1141 - once fixed this should be a listener
-        var currentFoldCount = 0
-        for (fold in editor.foldingModel.allFoldRegions) {
-            if (!fold.isExpanded) {
-                currentFoldCount++
+        val visibleAreaYChanged = visibleAreaEvent.newRectangle.y != visibleAreaEvent.oldRectangle.y
+        val visibleAreaHeightChanged = visibleAreaEvent.newRectangle.height != visibleAreaEvent.oldRectangle.height
+
+        if (visibleAreaYChanged || visibleAreaHeightChanged) {
+            val visibleArea = editor.scrollingModel.visibleArea
+            val factor = scrollstate.documentHeight.toDouble() / editor.contentComponent.height
+
+            scrollstate.setViewportArea((factor * visibleArea.y).toInt(), (factor * visibleArea.height).toInt())
+            scrollstate.setVisibleHeight(height)
+
+            if (visibleAreaHeightChanged) {
+                updateImage()
             }
+
+            updateSize()
+            repaint()
         }
-
-        val visibleArea = editor.scrollingModel.visibleArea
-        val factor = scrollstate.documentHeight.toDouble() / editor.contentComponent.height
-
-        scrollstate.setViewportArea((factor * visibleArea.y).toInt(), (factor * visibleArea.height).toInt())
-        scrollstate.setVisibleHeight(height)
-
-        if (currentFoldCount != lastFoldCount) {
-            updateImage()
-        }
-
-        lastFoldCount = currentFoldCount
-
-        updateSize()
-        repaint()
     }
 
     fun onClose() {
         container.removeComponentListener(componentListener)
         editor.document.removeDocumentListener(documentListener)
         editor.selectionModel.removeSelectionListener(selectionListener)
+        editor.removeEditorMouseListener(foldMouseTriggerListener)
         remove(scrollbar)
 
         mapRef.clear()
